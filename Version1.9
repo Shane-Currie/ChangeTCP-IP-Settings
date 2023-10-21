@@ -1,0 +1,55 @@
+#powershell script to display and prompt to change TCP settigs while saving backup of previous settings in txt file (same directory as script). Version 1.9
+#Updates needed, printing corresponding  IP address with MAC addresses 
+
+# Function to log messages
+function Write-Log {
+    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    Add-Content -Path "$PSScriptRoot\changeTCP_log.txt" -Value "$timestamp $args"
+}
+
+# Display available network adapters and their information
+$adapters = Get-NetAdapter | Select-Object Name, InterfaceIndex, Status, MacAddress, LinkSpeed
+$adapters | Format-Table -AutoSize
+
+# Display current IP configuration
+Write-Host "Current IP Configuration:"
+ipconfig
+
+# User selects network adapter
+$interfaceIndex = Read-Host "Enter the InterfaceIndex of the network adapter you want to configure"
+
+if ($interfaceIndex -ne $null) {
+    # Backup old settings before removal
+    $oldIPInfo = Get-NetIPAddress -InterfaceIndex $interfaceIndex | Where-Object { $_.IPAddress -notmatch "^169\.254\." }
+    $oldDnsInfo = Get-DnsClientServerAddress -InterfaceIndex $interfaceIndex -AddressFamily IPv4
+    Write-Log "Backup of old settings: IP Address $($oldIPInfo.IPAddress), Prefix Length $($oldIPInfo.PrefixLength), Gateway $($oldIPInfo.IPv4DefaultGateway), DNS $($oldDnsInfo.ServerAddresses)"
+
+    # User decides to manually enter IP settings or let it automatically be assigned
+    $autoAssignIP = Read-Host "Automatically assign IP settings? (yes/no)"
+    if ($autoAssignIP -eq "no") {
+        # User manually enters the new IP settings
+        $ipAddress = Read-Host "Enter the new IP address"
+        $prefixLength = Read-Host "Enter the new prefix length (e.g., 24 for subnet 255.255.255.0)"
+        $gateway = Read-Host "Enter the new default gateway"
+        Remove-NetIPAddress -InterfaceIndex $interfaceIndex -Confirm:$false
+        New-NetIPAddress -InterfaceIndex $interfaceIndex -IPAddress $ipAddress -PrefixLength $prefixLength
+        Remove-NetRoute -InterfaceIndex $interfaceIndex -Confirm:$false
+        New-NetRoute -InterfaceIndex $interfaceIndex -DestinationPrefix "0.0.0.0/0" -NextHop $gateway
+    }
+
+    # User decides to manually enter DNS settings or let it automatically be assigned
+    $autoAssignDNS = Read-Host "Automatically assign DNS settings? (yes/no)"
+    if ($autoAssignDNS -eq "no") {
+        $dnsPrimary = Read-Host "Enter the new primary DNS server address"
+        $dnsSecondary = Read-Host "Enter the new secondary DNS server address"
+        Set-DnsClientServerAddress -InterfaceIndex $interfaceIndex -ServerAddresses ($dnsPrimary, $dnsSecondary)
+    }
+
+    # Log new settings
+    $newIp = Get-NetIPAddress -InterfaceIndex $interfaceIndex -AddressFamily IPv4 | Where-Object { $_.IPAddress -notmatch "^169\.254\." }
+    $newDns = Get-DnsClientServerAddress -InterfaceIndex $interfaceIndex -AddressFamily IPv4
+    Write-Log "New settings: IP Address $($newIp.IPAddress), Prefix Length $($newIp.PrefixLength), Default Gateway $($newIp.IPv4DefaultGateway), DNS $($newDns.ServerAddresses)"
+} else {
+    Write-Host "InterfaceIndex is null. Cannot proceed."
+    Write-Log "Error: InterfaceIndex is null. Cannot proceed."
+}
